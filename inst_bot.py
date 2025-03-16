@@ -35,7 +35,11 @@ async def download_instagram_video(url: str) -> Path | str | None:
     logger.info(f"Начало скачивания видео с URL: {url}")
 
     process = await asyncio.create_subprocess_exec(
-        "yt-dlp", "--max-filesize", "300M", "-o", str(video_path), url,
+        "yt-dlp",
+        "--max-filesize", "300M",
+        "--cookies", str(Path('cookies.txt')),
+        "-o", str(video_path),
+        url,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE
     )
@@ -43,7 +47,7 @@ async def download_instagram_video(url: str) -> Path | str | None:
 
     if process.returncode != 0:
         logger.error(f"Ошибка при скачивании видео: {stderr.decode().strip()}")
-        return "Что-то пошло не так при скачивании видео, увы ¯\_(ツ)_/¯"
+        return "Что-то пошло не так при скачивании видео, увы \U0001F34C"
 
     logger.info(f"Видео успешно скачано: {video_path}")
 
@@ -64,6 +68,11 @@ async def handle_message(message: Message):
         if match:
             logger.info(
                 f"Получено новое сообщение с ссылкой на видео от {message.from_user.username} ({message.from_user.id})"
+            )
+
+            await bot.send_message(
+                chat_id=message.chat.id,
+                text='\U0001F680 Ссылка принята, начинаю скачивание'
             )
 
             video_path = await download_instagram_video(url=match.group(0))
