@@ -1,15 +1,24 @@
+"""Модуль основного скрипта для загрузки видео и фото из Instagram"""
 import asyncio
+import logging
 import os
 import re
 import subprocess
-import uuid
 from pathlib import Path
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
+from aiogram.client.session import aiohttp
 from aiogram.enums import ParseMode
 from aiogram.types import Message, FSInputFile
-from loguru import logger
+
+from tools import rm_tree, cut_query
+
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+logging.getLogger("aiogram").setLevel(logging.CRITICAL)
+
 
 TOKEN = os.getenv("BOT_TOKEN")
 
@@ -19,39 +28,53 @@ if not TOKEN:
 bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher()
 
-
 INSTAGRAM_REGEX = r"(https?://www\.instagram\.com/[^\s]+)"
 
 DOWNLOAD_PATH = Path("downloads")
 DOWNLOAD_PATH.mkdir(exist_ok=True)
 
-async def download_instagram_video(url: str) -> Path | str | None:
-    """Скачать видео по ссылке на Instagram
+
+async def get_real_instagram_url(short_url: str) -> str:
+    """Получить реальную ссылку после редиректов
 
     Args:
-        url: ссылка
+        short_url: ссылка на контент
     """
-    video_path = DOWNLOAD_PATH / f"{str(uuid.uuid4())[-12:]}.mp4"
-    logger.info(f"Начало скачивания видео с URL: {url}")
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url=short_url, allow_redirects=True) as response:
+            return str(response.url)
 
-    process = await asyncio.create_subprocess_exec(
-        "yt-dlp",
-        "--max-filesize", "300M",
-        "--cookies", str(Path('cookies.txt')),
-        "-o", str(video_path),
-        url,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE
-    )
-    stdout, stderr = await process.communicate()
 
-    if process.returncode != 0:
-        logger.error(f"Ошибка при скачивании видео: {stderr.decode().strip()}")
-        return "Что-то пошло не так при скачивании видео, увы \U0001F34C"
+async def download_instagram_content(url: str) -> list[Path]:
+    """Скачать контент из Instagram
 
-    logger.info(f"Видео успешно скачано: {video_path}")
+    Args:
+        url: ссылка на контент
+    """
+    logger.debug('Запускаем команду для скачивания')
+    try:
+        subprocess.run(
+            [
+                "gallery-dl",
+                "--cookies", str(Path('instagram_cookies.txt')),
+                "-d", str(DOWNLOAD_PATH),
+                url
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=True,
+        )
+        files = sorted(DOWNLOAD_PATH.glob('**/*'), key=lambda x: x.stat().st_ctime, reverse=True)
+        logger.debug(f'Скачанные файлы: {files}')
+        content = [f for f in files if f.is_file()][:1]
 
-    return video_path
+        logger.debug(f"Контент успешно скачан: {content}")
+
+        return content
+
+    except subprocess.CalledProcessError as ex:
+        logger.error(f"Ошибка gallery-dl: {ex}")
+        return []
 
 
 @dp.message()
@@ -67,40 +90,48 @@ async def handle_message(message: Message):
 
         if match:
             logger.info(
-                f"Получено новое сообщение с ссылкой на видео от {message.from_user.username} ({message.from_user.id})"
+                "Получено новое сообщение с ссылкой на видео Instagram "
+                f"от {message.from_user.username} ({message.from_user.id})"
             )
 
-            await bot.send_message(
-                chat_id=message.chat.id,
-                text='\U0001F680 Ссылка принята, начинаю скачивание'
-            )
+            try:
+                await bot.send_message(
+                    chat_id=message.chat.id,
+                    text='\U0001F680 Ссылка принята, начинаю скачивание'
+                )
 
-            video_path = await download_instagram_video(url=match.group(0))
+                real_url = await get_real_instagram_url(short_url=match.group(0))
+                logger.debug(f"Раскрытая ссылка: {real_url}")
 
-            if isinstance(video_path, str):
-                await message.reply(video_path)
+                files = await download_instagram_content(url=cut_query(url=real_url))
 
-            elif video_path:
-                try:
-                    await message.reply_video(video=FSInputFile(path=video_path, filename=video_path.name))
-                    logger.info(f"Видео отправлено в чат: {message.chat.id}")
+                if files:
+                    for file in files:
+                        if file.suffix in ('.jpg', 'jpeg'):
+                            await message.reply_photo(FSInputFile(path=file))
+                        else:
+                            await message.reply_document(FSInputFile(path=file))
+                        logger.info(f'Файл {file} успешно отправлен в чат')
+                else:
+                    await message.reply("Что-то пошло не так при скачивании видео, увы \U0001F34C")
 
-                except Exception as ex:
-                    logger.error(f"Ошибка при отправке видео: {ex}")
+            except Exception as ex:
+                logger.error(f"Ошибка при отправке контента: {ex}")
 
-                finally:
-                    video_path.unlink()
+            finally:
+                for p in DOWNLOAD_PATH.iterdir():
+                    rm_tree(path=p)
 
 
 async def main():
     """Точка G"""
-    logger.info("Бот запускается...")
+    logger.info("Бот запущен")
     await dp.start_polling(bot)
-    logger.info("Бот начал работать")
 
 
 if __name__ == '__main__':
     try:
         asyncio.run(main())
+
     except Exception as e:
         logger.exception(f"Произошла непредвиденная ошибка: {e}")
