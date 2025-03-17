@@ -12,13 +12,12 @@ from aiogram.client.session import aiohttp
 from aiogram.enums import ParseMode
 from aiogram.types import Message, FSInputFile
 
+from enums import HosterEnum
 from tools import rm_tree, cut_query
 
-
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 logging.getLogger("aiogram").setLevel(logging.CRITICAL)
-
 
 TOKEN = os.getenv("BOT_TOKEN")
 
@@ -29,12 +28,21 @@ bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher()
 
 INSTAGRAM_REGEX = r"(https?://www\.instagram\.com/[^\s]+)"
+TIKTOK_REGEX = r"https?://(?:www\.)?(?:tiktok\.com/.*/video/(\d+)|vt\.tiktok\.com/\w+/?)"
 
 DOWNLOAD_PATH = Path("downloads")
 DOWNLOAD_PATH.mkdir(exist_ok=True)
 
+CONFIG = {
+    HosterEnum.INSTAGRAM: {},
+    HosterEnum.TIKTOK: {
+        "has_spoiler": True,
+        "caption": "❗ Внимание! данное видео из ТикТок! Не рекомендуется для просмотра всем Полинам в этом чате"
+    }
+}
 
-async def get_real_instagram_url(short_url: str) -> str:
+
+async def get_real_url(short_url: str) -> str:
     """Получить реальную ссылку после редиректов
 
     Args:
@@ -45,18 +53,27 @@ async def get_real_instagram_url(short_url: str) -> str:
             return str(response.url)
 
 
-async def download_instagram_content(url: str) -> list[Path]:
-    """Скачать контент из Instagram
+async def download_content(url: str, content_type: HosterEnum) -> list[Path]:
+    """Скачать контент
 
     Args:
         url: ссылка на контент
+        content_type: тип контента
     """
-    logger.debug('Запускаем команду для скачивания')
+    logger.debug(f'Запускаем команду для скачивания, {content_type=}')
+
+    cookies = str(
+        Path('cookies', 'instagram_cookies.txt' if content_type == HosterEnum.INSTAGRAM else 'tiktok_cookies.txt')
+    )
+
+
+    logger.debug(f"Выбран файл куков: {cookies}")
+
     try:
         subprocess.run(
             [
                 "gallery-dl",
-                "--cookies", str(Path('instagram_cookies.txt')),
+                "--cookies", cookies,
                 "-d", str(DOWNLOAD_PATH),
                 url
             ],
@@ -86,34 +103,44 @@ async def handle_message(message: Message):
     """
 
     if message.text:
-        match = re.search(INSTAGRAM_REGEX, message.text)
+
+        if match := re.search(INSTAGRAM_REGEX, message.text):
+            content_type = HosterEnum.INSTAGRAM
+
+        elif match := re.search(TIKTOK_REGEX, message.text):
+            content_type = HosterEnum.TIKTOK
+
+        else:
+            content_type, match = None, None
+
+        logger.debug(f'Контент тип: {content_type}')
 
         if match:
             logger.info(
-                "Получено новое сообщение с ссылкой на видео Instagram "
+                f"Получено новое сообщение с ссылкой на контент {content_type.value} "
                 f"от {message.from_user.username} ({message.from_user.id})"
             )
 
             try:
                 await bot.send_message(
                     chat_id=message.chat.id,
-                    text='\U0001F680 Ссылка принята, начинаю скачивание'
+                    text='🚀 Ссылка принята, начинаю скачивание'
                 )
 
-                real_url = await get_real_instagram_url(short_url=match.group(0))
+                real_url = await get_real_url(short_url=match.group(0))
                 logger.debug(f"Раскрытая ссылка: {real_url}")
 
-                files = await download_instagram_content(url=cut_query(url=real_url))
+                files = await download_content(url=cut_query(url=real_url), content_type=content_type)
 
                 if files:
                     for file in files:
-                        if file.suffix in ('.jpg', 'jpeg'):
-                            await message.reply_photo(FSInputFile(path=file))
+                        if file.suffix in ('.jpg', 'jpeg', '.png'):
+                            await message.reply_photo(FSInputFile(path=file), **CONFIG.get(content_type, {}))
                         else:
-                            await message.reply_document(FSInputFile(path=file))
+                            await message.reply_video(FSInputFile(path=file), **CONFIG.get(content_type, {}))
                         logger.info(f'Файл {file} успешно отправлен в чат')
                 else:
-                    await message.reply("Что-то пошло не так при скачивании видео, увы \U0001F34C")
+                    await message.reply("Что-то пошло не так при скачивании видео, увы 🍌")
 
             except Exception as ex:
                 logger.error(f"Ошибка при отправке контента: {ex}")
