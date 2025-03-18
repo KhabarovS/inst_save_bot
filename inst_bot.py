@@ -1,4 +1,5 @@
 """Модуль основного скрипта для загрузки видео и фото из Instagram"""
+
 import asyncio
 import logging
 import os
@@ -15,9 +16,14 @@ from aiogram.types import Message, FSInputFile
 from enums import HosterEnum
 from tools import rm_tree, cut_query
 
-logging.basicConfig(level=logging.DEBUG)
-logger = logging.getLogger(__name__)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+    handlers=[logging.FileHandler("bot.log", encoding="utf-8"), logging.StreamHandler()],
+)
 logging.getLogger("aiogram").setLevel(logging.CRITICAL)
+logger = logging.getLogger(__name__)
 
 TOKEN = os.getenv("BOT_TOKEN")
 
@@ -37,8 +43,8 @@ CONFIG = {
     HosterEnum.INSTAGRAM: {},
     HosterEnum.TIKTOK: {
         "has_spoiler": True,
-        "caption": "❗ Внимание! данное видео из ТикТок! Не рекомендуется для просмотра всем Полинам в этом чате"
-    }
+        "caption": "❗ Внимание! данное видео из ТикТок! Не рекомендуется для просмотра всем Полинам в этом чате",
+    },
 }
 
 
@@ -60,37 +66,41 @@ async def download_content(url: str, content_type: HosterEnum) -> list[Path]:
         url: ссылка на контент
         content_type: тип контента
     """
-    logger.debug(f'Запускаем команду для скачивания, {content_type=}')
+    logger.debug(f"Запускаем команду для скачивания, {content_type=}")
 
     cookies = str(
-        Path('cookies', 'instagram_cookies.txt' if content_type == HosterEnum.INSTAGRAM else 'tiktok_cookies.txt')
+        Path(
+            "cookies",
+            "instagram_cookies.txt"
+            if content_type == HosterEnum.INSTAGRAM
+            else "tiktok_cookies.txt",
+        )
     )
 
-
     logger.debug(f"Выбран файл куков: {cookies}")
+    logger.debug(f"Финальные аргументы: --cookies: {cookies}, -d: {DOWNLOAD_PATH}, {url}")
 
     try:
-        subprocess.run(
-            [
-                "gallery-dl",
-                "--cookies", cookies,
-                "-d", str(DOWNLOAD_PATH),
-                url
-            ],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+        result = subprocess.run(
+            ["gallery-dl", "--cookies", cookies, "-d", str(DOWNLOAD_PATH), url],
+            capture_output=True,
             check=True,
         )
-        files = sorted(DOWNLOAD_PATH.glob('**/*'), key=lambda x: x.stat().st_ctime, reverse=True)
-        logger.debug(f'Скачанные файлы: {files}')
+
+        if result.returncode != 0:
+            logger.error(f"Ошибка gallery-dl: {result.stdout}\n{result.stderr}\n")
+            return []
+
+        files = sorted(DOWNLOAD_PATH.glob("**/*"), key=lambda x: x.stat().st_ctime, reverse=True)
+        logger.debug(f"Скачанные файлы: {files}")
         content = [f for f in files if f.is_file()][:1]
 
         logger.debug(f"Контент успешно скачан: {content}")
 
         return content
 
-    except subprocess.CalledProcessError as ex:
-        logger.error(f"Ошибка gallery-dl: {ex}")
+    except Exception as ex:
+        logger.error(f"Ошибка выполнения subprocess: {ex}\n")
         return []
 
 
@@ -103,7 +113,6 @@ async def handle_message(message: Message):
     """
 
     if message.text:
-
         if match := re.search(INSTAGRAM_REGEX, message.text):
             content_type = HosterEnum.INSTAGRAM
 
@@ -113,7 +122,7 @@ async def handle_message(message: Message):
         else:
             content_type, match = None, None
 
-        logger.debug(f'Контент тип: {content_type}')
+        logger.debug(f"Контент тип: {content_type}")
 
         if match:
             logger.info(
@@ -122,11 +131,6 @@ async def handle_message(message: Message):
             )
 
             try:
-                await bot.send_message(
-                    chat_id=message.chat.id,
-                    text='🚀 Ссылка принята, начинаю скачивание'
-                )
-
                 real_url = await get_real_url(short_url=match.group(0))
                 logger.debug(f"Раскрытая ссылка: {real_url}")
 
@@ -134,11 +138,11 @@ async def handle_message(message: Message):
 
                 if files:
                     for file in files:
-                        if file.suffix in ('.jpg', 'jpeg', '.png'):
+                        if file.suffix in (".jpg", "jpeg", ".png"):
                             await message.reply_photo(FSInputFile(path=file), **CONFIG.get(content_type, {}))
                         else:
                             await message.reply_video(FSInputFile(path=file), **CONFIG.get(content_type, {}))
-                        logger.info(f'Файл {file} успешно отправлен в чат')
+                        logger.info(f"Файл {file} успешно отправлен в чат")
                 else:
                     await message.reply("Что-то пошло не так при скачивании видео, увы 🍌")
 
@@ -156,7 +160,7 @@ async def main():
     await dp.start_polling(bot)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     try:
         asyncio.run(main())
 
