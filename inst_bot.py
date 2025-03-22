@@ -13,7 +13,7 @@ from aiogram.client.session import aiohttp
 from aiogram.enums import ParseMode
 from aiogram.types import Message, FSInputFile
 
-from enums import HosterEnum
+from enums import HosterEnum, ExtPhotoEnum, ExtVideoEnum
 from tools import rm_tree, cut_query
 
 logging.basicConfig(
@@ -38,14 +38,6 @@ TIKTOK_REGEX = r"https?://(?:www\.)?(?:tiktok\.com/.*/video/(\d+)|vt\.tiktok\.co
 
 DOWNLOAD_PATH = Path("downloads")
 DOWNLOAD_PATH.mkdir(exist_ok=True)
-
-CONFIG = {
-    HosterEnum.INSTAGRAM: {},
-    HosterEnum.TIKTOK: {
-        "has_spoiler": True,
-        "caption": "❗ Внимание! данное видео из ТикТок! Не рекомендуется для просмотра всем Полинам в этом чате",
-    },
-}
 
 
 async def get_real_url(short_url: str) -> str:
@@ -93,7 +85,7 @@ async def download_content(url: str, content_type: HosterEnum) -> list[Path]:
 
         files = sorted(DOWNLOAD_PATH.glob("**/*"), key=lambda x: x.stat().st_ctime, reverse=True)
         logger.debug(f"Скачанные файлы: {files}")
-        content = [f for f in files if f.is_file()][:1]
+        content = [f for f in files if f.is_file()][:2]
 
         logger.debug(f"Контент успешно скачан: {content}")
 
@@ -138,11 +130,26 @@ async def handle_message(message: Message):
 
                 if files:
                     for file in files:
-                        if file.suffix in (".jpg", "jpeg", ".png"):
-                            await message.reply_photo(FSInputFile(path=file), **CONFIG.get(content_type, {}))
+                        suffix = file.suffix.lower()
+
+                        if suffix in ExtPhotoEnum:
+                            await message.reply_photo(FSInputFile(path=file))
+
+                        elif suffix in ExtVideoEnum:
+                            await message.reply_video(FSInputFile(path=file))
+
                         else:
-                            await message.reply_video(FSInputFile(path=file), **CONFIG.get(content_type, {}))
+                            logger.warning(
+                                f"Неизвестный формат скачанного файла: '{file}'. Попытка отправить как документ"
+                            )
+                            await message.reply_document(
+                                FSInputFile(path=file),
+                                caption=f"Данный формат файла {suffix} "
+                                        "не входит в список допустимых форматов фото или видео",
+                            )
+
                         logger.info(f"Файл {file} успешно отправлен в чат")
+
                 else:
                     await message.reply("Что-то пошло не так при скачивании видео, увы 🍌")
 
