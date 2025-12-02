@@ -14,7 +14,7 @@ from aiogram.enums import ParseMode
 from aiogram.types import Message, FSInputFile
 
 from enums import HosterEnum, ExtPhotoEnum, ExtVideoEnum
-from tools import rm_tree, cut_query
+from tools import rm_tree, cut_query, get_subprocess_args
 
 logging.basicConfig(
     level=logging.INFO,
@@ -35,6 +35,9 @@ dp = Dispatcher()
 
 INSTAGRAM_REGEX = r"(https?://www\.instagram\.com/[^\s]+)"
 TIKTOK_REGEX = r"https?://(?:www\.)?(?:tiktok\.com/.*/video/(\d+)|vt\.tiktok\.com/\w+/?)"
+YOUTUBE_REGEX = r"https?:\/\/(?:www\.)?youtube\.com\/shorts\/[^\s]+"
+VK_REGEX = r"https?:\/\/(?:www\.)?(?:vk\.com\/clip-[0-9_]+|vkvideo\.ru\/video[0-9_]+)(?:\?[^\s]*)?"
+PIKABU_REGEX = r"https?:\/\/(?:www\.)?pikabu\.ru\/story\/[^\s/]+_\d+"
 
 DOWNLOAD_PATH = Path("downloads")
 DOWNLOAD_PATH.mkdir(exist_ok=True)
@@ -51,7 +54,7 @@ async def get_real_url(short_url: str) -> str:
             return str(response.url)
 
 
-async def download_content(url: str, content_type: HosterEnum) -> list[Path]:
+async def download_content(url: str, content_type: HosterEnum | None) -> list[Path]:
     """Скачать контент
 
     Args:
@@ -60,27 +63,15 @@ async def download_content(url: str, content_type: HosterEnum) -> list[Path]:
     """
     logger.debug(f"Запускаем команду для скачивания, {content_type=}")
 
-    cookies = str(
-        Path(
-            "cookies",
-            "instagram_cookies.txt"
-            if content_type == HosterEnum.INSTAGRAM
-            else "tiktok_cookies.txt",
-        )
-    )
+    args = get_subprocess_args(content_type=content_type, url=url, download_path=DOWNLOAD_PATH)
 
-    logger.debug(f"Выбран файл куков: {cookies}")
-    logger.debug(f"Финальные аргументы: --cookies: {cookies}, -d: {DOWNLOAD_PATH}, {url}")
+    logging.debug(f"Финальная строка запуска: {" ".join(args)}")
 
     try:
-        result = subprocess.run(
-            ["gallery-dl", "--cookies", cookies, "-d", str(DOWNLOAD_PATH), url],
-            capture_output=True,
-            check=True,
-        )
+        result = subprocess.run(args, capture_output=True, check=True)
 
         if result.returncode != 0:
-            logger.error(f"Ошибка gallery-dl: {result.stdout}\n{result.stderr}\n")
+            logger.error(f"Ошибка при выполнении команды: {result.stdout}\n{result.stderr}\n")
             return []
 
         files = sorted(DOWNLOAD_PATH.glob("**/*"), key=lambda x: x.stat().st_ctime, reverse=True)
@@ -110,6 +101,15 @@ async def handle_message(message: Message):
 
         elif match := re.search(TIKTOK_REGEX, message.text):
             content_type = HosterEnum.TIKTOK
+
+        elif match := re.search(YOUTUBE_REGEX, message.text):
+            content_type = HosterEnum.YOUTUBE
+
+        elif match := re.search(VK_REGEX, message.text):
+            content_type = HosterEnum.VK
+
+        elif match := re.search(PIKABU_REGEX, message.text):
+            content_type = HosterEnum.PIKABU
 
         else:
             content_type, match = None, None
@@ -157,8 +157,8 @@ async def handle_message(message: Message):
                 logger.error(f"Ошибка при отправке контента: {ex}")
 
             finally:
-                for p in DOWNLOAD_PATH.iterdir():
-                    rm_tree(path=p)
+                rm_tree(path=DOWNLOAD_PATH)
+                logger.info("*"* 50)
 
 
 async def main():

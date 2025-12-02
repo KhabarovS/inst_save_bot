@@ -1,0 +1,9 @@
+{
+    "postprocessors": [
+        {
+            "name": "ffmpeg",
+            "merge": true,
+            "args": ["-c", "copy"]
+        }
+    ]
+}

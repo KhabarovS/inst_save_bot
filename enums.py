@@ -6,6 +6,9 @@ class HosterEnum(Enum):
 
     INSTAGRAM = "INSTAGRAM"
     TIKTOK = "TIKTOK"
+    YOUTUBE = "YOUTUBE"
+    VK = "VK"
+    PIKABU = "PIKABU"
 
 
 class ExtPhotoEnum(Enum):
